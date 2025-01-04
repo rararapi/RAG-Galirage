@@ -76,6 +76,42 @@ def cleanup_old_batches(n):
         if os.path.exists(batch_dir):
             shutil.rmtree(batch_dir)
 
+def construct_few_shot_prompt(question):
+    """
+    Few-shotプロンプトを構築する関数
+    """
+    few_shot_examples = [
+        {
+            "question": "存在意義（パーパス）は、なんですか？",
+            "answer": "世界の人々に商品やサービスを通じて「健康」をお届けすることによって、当社を取り巻くすべての人や社会を「Well-being」へと導き、明日の世界を元気にすることです。",
+        },
+        {
+            "question": "事務連絡者の電話番号は？",
+            "answer": "（06）6758-1235です。",
+        },
+        {
+            "question": "Vロートプレミアムは、第何類の医薬品ですか？",
+            "answer": "第2類医薬品です。",
+        },
+        {
+            "question": "肌ラボ 極潤ヒアルロン液の詰め替え用には、何mLが入っていますか？",
+            "answer": "170mLが入っています。",
+        },
+        {
+            "question": "LN211E8は、どのようなhiPSCの分化において、どのように作用しますか？",
+            "answer": "Wnt 活性化を通じて神経堤細胞への分化を促進します。",
+        },
+    ]
+
+    # Few-shotプロンプトを構築
+    prompt = "以下は質問と回答の例です。\n\n"
+    for example in few_shot_examples:
+        prompt += f"質問: {example['question']}\n{example['answer']}\n\n"
+
+    # 最後にユーザーの質問を追加
+    prompt += f"質問: {question}\n"
+    return prompt
+
 def rag_implementation(question: str) -> str:
     """
     ロート製薬の製品・企業情報に関する質問に対して回答を生成する関数
@@ -130,27 +166,32 @@ def rag_implementation(question: str) -> str:
         # 最終回答を統合
         combined_answer = "\n".join(intermediate_answers)
         try:
+            # Few-shotプロンプトを構築
+            few_shot_prompt = construct_few_shot_prompt(question)
+
             # `final_prompt`を定義してLLMに渡す
             final_llm = ChatOpenAI(model=model)
             final_prompt = [
-                SystemMessage(content="あなたは情報を統合して適切な回答を生成するAIアシスタントです。"),
-                HumanMessage(
-                    content=(
-                        f"以下は複数の回答候補です。それぞれはバッチ処理されたドキュメントから生成された回答です。\n"
-                        f"質問: {question}\n"
-                        f"回答候補:\n{combined_answer}\n\n"
-                        "これらの情報を基に、質問に対する最も適切な最終回答を生成してください。"
-                    )
-                ),
+                # Few-shotプロンプトを背景情報として提供
+                SystemMessage(content=(
+                    "以下は質問とその回答例です。参考にして、与えられた質問に適切な回答を生成してください。\n\n"
+                    f"{few_shot_prompt}"
+                )),
+                # ユーザーの質問と回答候補をHumanMessageで提供
+                HumanMessage(content=(
+                    f"質問: {question}\n\n"
+                    "以下はバッチ処理されたドキュメントから生成された回答候補です。\n"
+                    "回答候補:\n" +
+                    "\n".join([f"- {ans}" for ans in combined_answer.split('\n') if ans.strip()]) +
+                    "\n\nこれらの情報を基に、質問に対する最も適切な回答を記述してください。"
+                )),
             ]
             final_answer = final_llm.invoke(final_prompt).content
         except Exception as e:
-            # print(f"Error generating final answer: {e}")
             final_answer = "資料から回答することができませんでした。"
 
         return final_answer
     except Exception as e:
-        # print(f"Error in rag_implementation: {e}")
         return "資料から回答することができませんでした。"
 
 
