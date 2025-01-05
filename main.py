@@ -4,7 +4,6 @@ import time
 import fitz
 import shutil
 import os
-import tempfile
 import urllib.request
 from dotenv import load_dotenv
 from langchain.chains import RetrievalQA
@@ -59,7 +58,7 @@ def download_and_load_pdfs(urls):
             print(f"Failed to process PDF from {url}: {e}")
     return documents
 
-def split_documents(documents, chunk_size=80, chunk_overlap=20):
+def split_documents(documents, chunk_size=800, chunk_overlap=400):
     """長いテキストを分割する。空のドキュメントをスキップ"""
     text_splitter = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     split_docs = []
@@ -174,7 +173,8 @@ def rag_implementation(question: str) -> str:
             final_prompt = [
                 # Few-shotプロンプトを背景情報として提供
                 SystemMessage(content=(
-                    "以下は質問とその回答例です。参考にして、与えられた質問に適切な回答を生成してください。\n\n"
+                    "以下は質問とその回答例です。参考にして、与えられた質問に適切な回答を短い一文で答えてください。\n"
+                    "また、曖昧な回答となった場合は「分かりません。」と回答してください。\n\n"
                     f"{few_shot_prompt}"
                 )),
                 # ユーザーの質問と回答候補をHumanMessageで提供
@@ -183,7 +183,8 @@ def rag_implementation(question: str) -> str:
                     "以下はバッチ処理されたドキュメントから生成された回答候補です。\n"
                     "回答候補:\n" +
                     "\n".join([f"- {ans}" for ans in combined_answer.split('\n') if ans.strip()]) +
-                    "\n\nこれらの情報を基に、質問に対する最も適切な回答を記述してください。"
+                    "\n\nこれらの情報を基に、質問に対する最も適切な回答を簡潔に記述してください。\n"
+                    "Let's think step by step."
                 )),
             ]
             final_answer = final_llm.invoke(final_prompt).content
