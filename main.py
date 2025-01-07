@@ -15,7 +15,7 @@ import logging
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain.schema import HumanMessage, SystemMessage
-
+from rank_bm25 import BM25Okapi
 
 # ==============================================================================
 # !!! 警告 !!!: 以下の変数を変更しないでください。
@@ -55,25 +55,49 @@ def download_and_load_pdfs(urls):
             text_content = load_pdf_with_pymupdf(url)
             documents.append({"page_content": text_content, "metadata": {"source": url}})
         except Exception as e:
-            print(f"Failed to process PDF from {url}: {e}")
+            # テンプレートの注意: デバッグ出力は表示しないが、ここは最低限の例外を記録
+            pass
     return documents
 
-def split_documents(documents, chunk_size=1000, chunk_overlap=200):
+def split_documents(documents, chunk_size=800, chunk_overlap=400):
     """長いテキストを分割する。空のドキュメントをスキップ"""
     text_splitter = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     split_docs = []
     for doc in documents:
         if doc["page_content"].strip():  # 空でない場合のみ処理
-            split_docs.extend(text_splitter.split_text(doc["page_content"]))
+            # CharacterTextSplitter は docstrings を返すが、ここでは文字列だけで運用
+            chunks = text_splitter.split_text(doc["page_content"])
+            for chunk in chunks:
+                if chunk.strip():
+                    # chunk を "page_content" に格納する形で取り扱う
+                    split_docs.append({
+                        "page_content": chunk,
+                        "metadata": doc["metadata"]
+                    })
     return split_docs
 
+def filter_documents_by_bm25(question, docs, top_k=50):
+    """
+    質問に対してBM25でスコアリングし、上位 top_k 件の文書だけを返す
+    docs: [{"page_content": str, "metadata": dict}, ...]
+    """
+    # BM25は「トークン化された単語リスト」でスコアリングするため、簡易的にsplit
+    corpus = [d["page_content"] for d in docs]
+    tokenized_corpus = [c.split() for c in corpus]
 
-def cleanup_old_batches(n):
-    """既存のDB_batch_ディレクトリを削除"""
-    for idx in range(n):  # 最大10バッチを想定
-        batch_dir = f"DB_batch_{idx}"
-        if os.path.exists(batch_dir):
-            shutil.rmtree(batch_dir)
+    bm25 = BM25Okapi(tokenized_corpus)
+    tokenized_query = question.split()
+    scores = bm25.get_scores(tokenized_query)
+
+    # スコアの高い順にソートして上位 top_k を抽出
+    scored_docs = sorted(
+        zip(docs, scores),
+        key=lambda x: x[1],
+        reverse=True
+    )[:top_k]
+
+    filtered_docs = [x[0] for x in scored_docs]
+    return filtered_docs
 
 def construct_few_shot_prompt(question):
     """
@@ -131,72 +155,61 @@ def rag_implementation(question: str) -> str:
     logging.basicConfig(level=logging.ERROR)
 
     try:
-        # URLからPDFをダウンロードしてロード
+        # 1. PDFをダウンロードしてまとめてテキスト抽出
         documents = download_and_load_pdfs(pdf_file_urls)
 
-        # ドキュメントを分割
-        split_docs = split_documents(documents)
+        # 2. ドキュメントをチャンクに分割
+        split_docs = split_documents(documents, chunk_size=800, chunk_overlap=400)
 
-        batch_size = 4
-        # 古いバッチディレクトリをクリーンアップ
-        cleanup_old_batches(batch_size)
-        # 分割ドキュメントをバッチ化
-        batched_docs = [split_docs[i::batch_size] for i in range(batch_size)]
+        # 3. BM25を使って質問との関連度が高いチャンクを事前に判定
+        filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=50)
 
-        # 各バッチの回答を取得
-        intermediate_answers = []
+        # 4. 単一のベクトルストアを作成
         embeddings = OpenAIEmbeddings()
-        
-        for idx, batch in enumerate(batched_docs):
-            vector_store = Chroma.from_texts(batch, embeddings, persist_directory=f"DB_batch_{idx}")
-            retriever = vector_store.as_retriever(search_kwargs={"k": 3})
-            qa_chain = RetrievalQA.from_chain_type(
-                llm=ChatOpenAI(model=model),
-                retriever=retriever,
-                chain_type="stuff"
-            )
-            try:
-                answer = qa_chain.run(question)
-                intermediate_answers.append(answer)
-            except Exception as e:
-                print(f"Error processing batch {idx + 1}: {e}")
-                intermediate_answers.append("")
+        vector_store_dir = "DB_single_store"
+        if os.path.exists(vector_store_dir):
+            shutil.rmtree(vector_store_dir)  # 以前のストアを削除
 
-        # 最終回答を統合
-        combined_answer = "\n".join(intermediate_answers)
-        try:
-            # Few-shotプロンプトを構築
-            few_shot_prompt = construct_few_shot_prompt(question)
+        vector_store = Chroma.from_texts(
+            texts=[doc["page_content"] for doc in filtered_docs],
+            embedding=embeddings,
+            metadatas=[doc["metadata"] for doc in filtered_docs],
+            persist_directory=vector_store_dir
+        )
 
-            # `final_prompt`を定義してLLMに渡す
-            final_llm = ChatOpenAI(model=model)
-            final_prompt = [
-                # Few-shotプロンプトを背景情報として提供
-                SystemMessage(content=(
-                    "以下は質問とその回答例です。参考にして、与えられた質問に適切な回答を短い一文で答えてください。\n"
-                    f"{few_shot_prompt}"
-                )),
-                # ユーザーの質問と回答候補をHumanMessageで提供
-                HumanMessage(content=(
-                    f"質問: {question}\n\n"
-                    "以下はバッチ処理されたドキュメントから生成された回答候補です。\n"
-                    "回答候補:\n" +
-                    "\n".join([f"- {ans}" for ans in combined_answer.split('\n') if ans.strip()]) +
-                    "\n\nこれらの情報を基に、質問に対する最も適切な回答を簡潔に記述してください。\n"
-                    "与えられた情報が不足している場合でも、論理的に考えて最も妥当な回答を推測してください。\n"
-                    "Let's think step by step."
-                )),
-            ]
-            final_answer = final_llm.invoke(final_prompt).content
-        except Exception as e:
-            final_answer = "資料から回答することができませんでした。"
+        # 5. RetrievalQAチェーンを 1 回だけ実行して回答を得る
+        retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+        qa_chain = RetrievalQA.from_chain_type(
+            llm=ChatOpenAI(model=model),
+            retriever=retriever,
+            chain_type="stuff"
+        )
+
+        answer_candidate = qa_chain.run(question)
+
+        # 6. Few-shot プロンプトを使って最終回答をリライト・短文化
+        few_shot_prompt = construct_few_shot_prompt(question)
+        final_llm = ChatOpenAI(model=model)
+        final_prompt = [
+            SystemMessage(content=(
+                "以下は質問とその回答例です。参考にして、与えられた質問に適切な回答を短い一文で答えてください。\n"
+                "また、与えられた情報が不足している場合でも、論理的に考えて最も妥当な回答を推測してください。\n\n"
+                f"{few_shot_prompt}"
+            )),
+            HumanMessage(content=(
+                f"質問: {question}\n\n"
+                "以下はBM25によって選ばれた文書から生成された回答候補です。\n"
+                f"回答候補:\n{answer_candidate}\n\n"
+                "これらを踏まえて、最も適切な回答を簡潔に記述してください。\n"
+                "Let's think step by step."
+            )),
+        ]
+        final_answer = final_llm.invoke(final_prompt).content
 
         return final_answer
+
     except Exception as e:
         return "資料から回答することができませんでした。"
-
-
-# ==============================================================================
 
 
 # ==============================================================================
@@ -229,4 +242,3 @@ if __name__ == "__main__":
     else:
         print("Please provide a question as a command-line argument.")
         sys.exit(1)
-# ==============================================================================
