@@ -58,7 +58,7 @@ def download_and_load_pdfs(urls):
             print(f"Failed to process PDF from {url}: {e}")
     return documents
 
-def split_documents(documents, chunk_size=800, chunk_overlap=400):
+def split_documents(documents, chunk_size=1000, chunk_overlap=200):
     """長いテキストを分割する。空のドキュメントをスキップ"""
     text_splitter = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     split_docs = []
@@ -174,7 +174,6 @@ def rag_implementation(question: str) -> str:
                 # Few-shotプロンプトを背景情報として提供
                 SystemMessage(content=(
                     "以下は質問とその回答例です。参考にして、与えられた質問に適切な回答を短い一文で答えてください。\n"
-                    "また、与えられた情報が不足している場合でも、論理的に考えて最も妥当な回答を推測してください。\n\n"
                     f"{few_shot_prompt}"
                 )),
                 # ユーザーの質問と回答候補をHumanMessageで提供
@@ -184,6 +183,7 @@ def rag_implementation(question: str) -> str:
                     "回答候補:\n" +
                     "\n".join([f"- {ans}" for ans in combined_answer.split('\n') if ans.strip()]) +
                     "\n\nこれらの情報を基に、質問に対する最も適切な回答を簡潔に記述してください。\n"
+                    "与えられた情報が不足している場合でも、論理的に考えて最も妥当な回答を推測してください。\n"
                     "Let's think step by step."
                 )),
             ]
