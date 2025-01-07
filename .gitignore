@@ -171,4 +171,4 @@ cython_debug/
 .pypirc
 
 # Ignore all DB_batch directories
-DB_batch_*
+DB_*
