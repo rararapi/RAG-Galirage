@@ -174,7 +174,7 @@ def rag_implementation(question: str) -> str:
                 # Few-shotプロンプトを背景情報として提供
                 SystemMessage(content=(
                     "以下は質問とその回答例です。参考にして、与えられた質問に適切な回答を短い一文で答えてください。\n"
-                    "また、曖昧な回答となった場合は「分かりません。」と回答してください。\n\n"
+                    "また、与えられた情報が不足している場合でも、論理的に考えて最も妥当な回答を推測してください。\n\n"
                     f"{few_shot_prompt}"
                 )),
                 # ユーザーの質問と回答候補をHumanMessageで提供
