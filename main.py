@@ -171,7 +171,7 @@ def rag_implementation(question: str) -> str:
         split_docs = split_documents(documents, chunk_size=800, chunk_overlap=400)
 
         # 3. BM25を使って質問との関連度が高いチャンクを事前に判定
-        filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=2)
+        filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=3)
 
         # 4. 単一のベクトルストアを作成
         embeddings = OpenAIEmbeddings()
