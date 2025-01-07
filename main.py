@@ -4,6 +4,7 @@ import time
 import fitz
 import shutil
 import os
+import re
 import urllib.request
 from dotenv import load_dotenv
 from langchain.chains import RetrievalQA
@@ -52,12 +53,20 @@ def download_and_load_pdfs(urls):
     documents = []
     for url in urls:
         try:
+            # PDFテキストを抽出
             text_content = load_pdf_with_pymupdf(url)
-            documents.append({"page_content": text_content, "metadata": {"source": url}})
+            cleaned_text = normalize_text(text_content)
+
+            documents.append({"page_content": cleaned_text, "metadata": {"source": url}})
         except Exception as e:
-            # テンプレートの注意: デバッグ出力は表示しないが、ここは最低限の例外を記録
             pass
     return documents
+
+def normalize_text(s):
+    s = re.sub(r'\s+', ' ', s)  # 連続する空白を1つに
+    s = s.replace("..", ".").replace(". .", ".")
+    s = s.strip()
+    return s
 
 def split_documents(documents, chunk_size=800, chunk_overlap=400):
     """長いテキストを分割する。空のドキュメントをスキップ"""
@@ -162,7 +171,7 @@ def rag_implementation(question: str) -> str:
         split_docs = split_documents(documents, chunk_size=800, chunk_overlap=400)
 
         # 3. BM25を使って質問との関連度が高いチャンクを事前に判定
-        filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=50)
+        filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=2)
 
         # 4. 単一のベクトルストアを作成
         embeddings = OpenAIEmbeddings()
