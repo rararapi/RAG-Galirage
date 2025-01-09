@@ -37,6 +37,15 @@ pdf_file_urls = [
 # !!! 注意 !!!: デバッグ過程は標準出力に出力しないでください。
 # ==============================================================================
 
+def normalize_text(s):
+    """
+    基本的なノイズ除去を行う関数。
+    """
+    s = re.sub(r'\s+', ' ', s)  # 連続する空白を1つに
+    s = s.replace("..", ".").replace(". .", ".")
+    s = s.strip()
+    return s
+
 def load_pdf_with_pymupdf(url):
     """URLからPDFをダウンロードしてテキストを抽出"""
     response = urllib.request.urlopen(url)
@@ -46,43 +55,78 @@ def load_pdf_with_pymupdf(url):
     for page in pdf_document:
         texts.append(page.get_text())
     pdf_document.close()
-    return "\n".join(texts)
+
+    raw_text = "\n".join(texts)
+    return normalize_text(raw_text)
 
 def download_and_load_pdfs(urls):
-    """URLからPDFをダウンロードし、pymupdfでテキストを抽出"""
+    """
+    URLからPDFをダウンロードし、pymupdfでテキストを抽出
+    -> normalize_textを通して不要な空白や記号の重複を整理
+    """
     documents = []
     for url in urls:
         try:
-            # PDFテキストを抽出
             text_content = load_pdf_with_pymupdf(url)
-            cleaned_text = normalize_text(text_content)
-
-            documents.append({"page_content": cleaned_text, "metadata": {"source": url}})
-        except Exception as e:
+            documents.append({"page_content": text_content, "metadata": {"source": url}})
+        except Exception:
             pass
     return documents
 
-def normalize_text(s):
-    s = re.sub(r'\s+', ' ', s)  # 連続する空白を1つに
-    s = s.replace("..", ".").replace(". .", ".")
-    s = s.strip()
-    return s
+def split_into_paragraphs(text):
+    """
+    段落ベースで分割するための簡易実装。
+    空行(\n\n)を挟んでいる部分で区切る例。
+    """
+    # PDFにより段落区切りが\n\nでない場合もあるため要調整
+    paragraphs = text.split("\n\n")
+    # 前後空白除去 + 空文字除外
+    paragraphs = [p.strip() for p in paragraphs if p.strip()]
+    return paragraphs
 
-def split_documents(documents, chunk_size=800, chunk_overlap=400):
-    """長いテキストを分割する。空のドキュメントをスキップ"""
-    text_splitter = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+def chunk_paragraph(paragraph, chunk_size=1000, chunk_overlap=200):
+    """
+    1つの段落がchunk_sizeより大きい場合、overlapを考慮しながら再分割する
+    """
+    results = []
+    start = 0
+    while start < len(paragraph):
+        end = min(start + chunk_size, len(paragraph))
+        # substringを取得
+        sub_text = paragraph[start:end]
+        results.append(sub_text)
+        start += (chunk_size - chunk_overlap)
+    return results
+
+def split_documents(documents, chunk_size=1000, chunk_overlap=200):
+    """
+    改善版: 
+    1) 段落ベースでまず分割
+    2) 段落が大きい場合だけ chunk_size & chunk_overlap で分割
+    """
     split_docs = []
     for doc in documents:
-        if doc["page_content"].strip():  # 空でない場合のみ処理
-            # CharacterTextSplitter は docstrings を返すが、ここでは文字列だけで運用
-            chunks = text_splitter.split_text(doc["page_content"])
-            for chunk in chunks:
-                if chunk.strip():
-                    # chunk を "page_content" に格納する形で取り扱う
-                    split_docs.append({
-                        "page_content": chunk,
-                        "metadata": doc["metadata"]
-                    })
+        text = doc["page_content"]
+        # 1) 段落に分ける
+        paragraphs = split_into_paragraphs(text)
+
+        for para in paragraphs:
+            # 2) 段落が大きい場合だけ再分割
+            if len(para) > chunk_size:
+                sub_chunks = chunk_paragraph(para, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+                for sc in sub_chunks:
+                    if sc.strip():
+                        split_docs.append({
+                            "page_content": sc.strip(),
+                            "metadata": doc["metadata"]
+                        })
+            else:
+                # 段落が小さい場合はそのまま
+                split_docs.append({
+                    "page_content": para,
+                    "metadata": doc["metadata"]
+                })
     return split_docs
 
 def filter_documents_by_bm25(question, docs, top_k=50):
@@ -165,13 +209,13 @@ def rag_implementation(question: str) -> str:
 
     try:
         # 1. PDFをダウンロードしてまとめてテキスト抽出
+        #    -> 段落ベースで分割、必要ならチャンク化
         documents = download_and_load_pdfs(pdf_file_urls)
+        split_docs = split_documents(documents, chunk_size=1000, chunk_overlap=200)
 
-        # 2. ドキュメントをチャンクに分割
-        split_docs = split_documents(documents, chunk_size=800, chunk_overlap=400)
-
-        # 3. BM25を使って質問との関連度が高いチャンクを事前に判定
-        filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=3)
+        # 2. BM25を使って質問との関連度が高いチャンクを事前に判定
+        #    -> top_kを少なめにすることでトークン超過も回避しやすい
+        filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=5)
 
         # 4. 単一のベクトルストアを作成
         embeddings = OpenAIEmbeddings()
