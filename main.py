@@ -191,7 +191,7 @@ def rag_implementation(question: str) -> str:
 
         # 2. BM25を使って質問との関連度が高いチャンクを事前に判定
         #    -> top_kを少なめにすることでトークン超過も回避しやすい
-        filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=30)
+        filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=40)
 
         # 3. 単一のベクトルストアを作成
         embeddings = OpenAIEmbeddings()
