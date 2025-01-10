@@ -47,7 +47,7 @@ def normalize_text(s):
     return s
 
 def load_pdf_with_pymupdf(url):
-    """URLからPDFをダウンロードしてテキストを抽出"""
+    """URLからPDFをダウンロードしてページ単位でテキストを抽出"""
     response = urllib.request.urlopen(url)
     pdf_data = response.read()
     pdf_document = fitz.open(stream=pdf_data, filetype="pdf")
@@ -56,77 +56,56 @@ def load_pdf_with_pymupdf(url):
         texts.append(page.get_text())
     pdf_document.close()
 
-    raw_text = "\n".join(texts)
-    return normalize_text(raw_text)
+    return texts  # ページごとのリストを返す
 
 def download_and_load_pdfs(urls):
     """
-    URLからPDFをダウンロードし、pymupdfでテキストを抽出
-    -> normalize_textを通して不要な空白や記号の重複を整理
+    URLからPDFをダウンロードし、pymupdfでページ単位でテキストを抽出
     """
     documents = []
     for url in urls:
         try:
-            text_content = load_pdf_with_pymupdf(url)
-            documents.append({"page_content": text_content, "metadata": {"source": url}})
+            pages = load_pdf_with_pymupdf(url)
+            for page_number, page_content in enumerate(pages):
+                documents.append({
+                    "page_content": page_content,
+                    "metadata": {"source": url, "page_number": page_number + 1}
+                })
         except Exception:
             pass
     return documents
 
-def split_into_paragraphs(text):
+def chunk_page(page_content, chunk_size=1000, chunk_overlap=200):
     """
-    段落ベースで分割するための簡易実装。
-    空行(\n\n)を挟んでいる部分で区切る例。
-    """
-    # PDFにより段落区切りが\n\nでない場合もあるため要調整
-    paragraphs = text.split("\n\n")
-    # 前後空白除去 + 空文字除外
-    paragraphs = [p.strip() for p in paragraphs if p.strip()]
-    return paragraphs
-
-
-def chunk_paragraph(paragraph, chunk_size=1000, chunk_overlap=200):
-    """
-    1つの段落がchunk_sizeより大きい場合、overlapを考慮しながら再分割する
+    1ページ内でchunk_sizeより大きい場合、overlapを考慮して分割
     """
     results = []
     start = 0
-    while start < len(paragraph):
-        end = min(start + chunk_size, len(paragraph))
-        # substringを取得
-        sub_text = paragraph[start:end]
+    while start < len(page_content):
+        end = min(start + chunk_size, len(page_content))
+        sub_text = page_content[start:end]
         results.append(sub_text)
         start += (chunk_size - chunk_overlap)
     return results
 
 def split_documents(documents, chunk_size=1000, chunk_overlap=200):
     """
-    改善版: 
-    1) 段落ベースでまず分割
-    2) 段落が大きい場合だけ chunk_size & chunk_overlap で分割
+    ページ単位でチャンキング
+    1) 各ページをchunk_sizeに基づき分割
     """
     split_docs = []
     for doc in documents:
         text = doc["page_content"]
-        # 1) 段落に分ける
-        paragraphs = split_into_paragraphs(text)
-
-        for para in paragraphs:
-            # 2) 段落が大きい場合だけ再分割
-            if len(para) > chunk_size:
-                sub_chunks = chunk_paragraph(para, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-                for sc in sub_chunks:
-                    if sc.strip():
-                        split_docs.append({
-                            "page_content": sc.strip(),
-                            "metadata": doc["metadata"]
-                        })
-            else:
-                # 段落が小さい場合はそのまま
-                split_docs.append({
-                    "page_content": para,
-                    "metadata": doc["metadata"]
-                })
+        if len(text) > chunk_size:
+            sub_chunks = chunk_page(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+            for sc in sub_chunks:
+                if sc.strip():
+                    split_docs.append({
+                        "page_content": sc.strip(),
+                        "metadata": doc["metadata"]
+                    })
+        else:
+            split_docs.append(doc)
     return split_docs
 
 def filter_documents_by_bm25(question, docs, top_k=50):
@@ -134,7 +113,6 @@ def filter_documents_by_bm25(question, docs, top_k=50):
     質問に対してBM25でスコアリングし、上位 top_k 件の文書だけを返す
     docs: [{"page_content": str, "metadata": dict}, ...]
     """
-    # BM25は「トークン化された単語リスト」でスコアリングするため、簡易的にsplit
     corpus = [d["page_content"] for d in docs]
     tokenized_corpus = [c.split() for c in corpus]
 
@@ -142,7 +120,6 @@ def filter_documents_by_bm25(question, docs, top_k=50):
     tokenized_query = question.split()
     scores = bm25.get_scores(tokenized_query)
 
-    # スコアの高い順にソートして上位 top_k を抽出
     scored_docs = sorted(
         zip(docs, scores),
         key=lambda x: x[1],
@@ -209,15 +186,14 @@ def rag_implementation(question: str) -> str:
 
     try:
         # 1. PDFをダウンロードしてまとめてテキスト抽出
-        #    -> 段落ベースで分割、必要ならチャンク化
         documents = download_and_load_pdfs(pdf_file_urls)
         split_docs = split_documents(documents, chunk_size=1000, chunk_overlap=200)
 
         # 2. BM25を使って質問との関連度が高いチャンクを事前に判定
         #    -> top_kを少なめにすることでトークン超過も回避しやすい
-        filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=5)
+        filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=30)
 
-        # 4. 単一のベクトルストアを作成
+        # 3. 単一のベクトルストアを作成
         embeddings = OpenAIEmbeddings()
         vector_store_dir = "DB_single_store"
         if os.path.exists(vector_store_dir):
@@ -230,8 +206,8 @@ def rag_implementation(question: str) -> str:
             persist_directory=vector_store_dir
         )
 
-        # 5. RetrievalQAチェーンを 1 回だけ実行して回答を得る
-        retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+        # 4. RetrievalQAチェーンを 1 回だけ実行して回答を得る
+        retriever = vector_store.as_retriever(search_kwargs={"k": 5})
         qa_chain = RetrievalQA.from_chain_type(
             llm=ChatOpenAI(model=model),
             retriever=retriever,
@@ -239,8 +215,9 @@ def rag_implementation(question: str) -> str:
         )
 
         answer_candidate = qa_chain.run(question)
+        # print(answer_candidate)
 
-        # 6. Few-shot プロンプトを使って最終回答をリライト・短文化
+        # 5. Few-shot プロンプトを使って最終回答をリライト・短文化
         few_shot_prompt = construct_few_shot_prompt(question)
         final_llm = ChatOpenAI(model=model)
         final_prompt = [
