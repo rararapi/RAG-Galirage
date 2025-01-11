@@ -209,7 +209,8 @@ def rag_implementation(question: str) -> str:
         final_prompt = [
             SystemMessage(content=(
                 "以下は質問とその回答例です。参考にして、与えられた質問に適切な回答を短い一文で答えてください。\n"
-                "また、与えられた情報が不足している場合でも、論理的に考えて最も妥当な回答を推測してください。\n\n"
+                "また、与えられた情報が不足している場合でも、論理的に考えて最も妥当な回答を推測してください。\n"
+                "さらに、質問に主語が含まれている場合は、回答に主語が不要であることに留意してください。\n\n"
                 f"{few_shot_prompt}"
             )),
             HumanMessage(content=(
