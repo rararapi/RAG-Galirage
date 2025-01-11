@@ -146,19 +146,13 @@ def construct_few_shot_prompt(question):
 
 def rag_implementation(question: str) -> str:
     """
-    ロート製薬の製品・企業情報に関する質問に対して回答を生成する関数
-    この関数は与えられた質問に対してRAGパイプラインを用いて回答を生成します。
+    複数のチャンクサイズでRAGパイプラインを実行し、回答を統合する関数
 
     Args:
-        question (str): ロート製薬の製品・企業情報に関する質問文字列
+        question (str): 質問文字列
 
     Returns:
-        answer (str): 質問に対する回答
-
-    Note:
-        - デバッグ出力は標準出力に出力しないでください
-        - model 変数 と pdf_file_urls 変数は編集しないでください
-        - 回答は日本語で生成してください
+        answer (str): 統合された最終的な回答
     """
     warnings.filterwarnings("ignore", category=DeprecationWarning)
     logging.basicConfig(level=logging.ERROR)
@@ -167,36 +161,49 @@ def rag_implementation(question: str) -> str:
         # 1. PDFをダウンロードしてまとめてテキスト抽出
         documents = download_and_load_pdfs(pdf_file_urls)
 
-        # 2. ドキュメントをチャンクに分割
-        split_docs = split_documents(documents, chunk_size=800, chunk_overlap=400)
+        # 2. 複数のチャンクサイズでドキュメントを分割
+        chunk_configs = [
+            {"chunk_size": 100, "chunk_overlap": 30},
+            {"chunk_size": 500, "chunk_overlap": 200},
+            {"chunk_size": 1000, "chunk_overlap": 500},
+        ]
 
-        # 3. BM25を使って質問との関連度が高いチャンクを事前に判定
-        filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=3)
+        answer_candidates = []
 
-        # 4. 単一のベクトルストアを作成
-        embeddings = OpenAIEmbeddings()
-        vector_store_dir = "DB_single_store"
-        if os.path.exists(vector_store_dir):
-            shutil.rmtree(vector_store_dir)  # 以前のストアを削除
+        for config in chunk_configs:
+            # ドキュメントを分割
+            split_docs = split_documents(documents, chunk_size=config["chunk_size"], chunk_overlap=config["chunk_overlap"])
+            
+            # 質問との関連度が高いチャンクを抽出
+            filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=3)
 
-        vector_store = Chroma.from_texts(
-            texts=[doc["page_content"] for doc in filtered_docs],
-            embedding=embeddings,
-            metadatas=[doc["metadata"] for doc in filtered_docs],
-            persist_directory=vector_store_dir
-        )
+            # ベクトルストアを作成
+            embeddings = OpenAIEmbeddings()
+            vector_store_dir = f"DB_store_{config['chunk_size']}"
+            if os.path.exists(vector_store_dir):
+                shutil.rmtree(vector_store_dir)  # 以前のストアを削除
 
-        # 5. RetrievalQAチェーンを 1 回だけ実行して回答を得る
-        retriever = vector_store.as_retriever(search_kwargs={"k": 3})
-        qa_chain = RetrievalQA.from_chain_type(
-            llm=ChatOpenAI(model=model),
-            retriever=retriever,
-            chain_type="stuff"
-        )
+            vector_store = Chroma.from_texts(
+                texts=[doc["page_content"] for doc in filtered_docs],
+                embedding=embeddings,
+                metadatas=[doc["metadata"] for doc in filtered_docs],
+                persist_directory=vector_store_dir
+            )
 
-        answer_candidate = qa_chain.run(question)
+            # RetrievalQAチェーンを実行
+            retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+            qa_chain = RetrievalQA.from_chain_type(
+                llm=ChatOpenAI(model=model),
+                retriever=retriever,
+                chain_type="stuff"
+            )
 
-        # 6. Few-shot プロンプトを使って最終回答をリライト・短文化
+            # 各チャンクサイズに基づく回答を取得
+            answer_candidate = qa_chain.run(question)
+            answer_candidates.append(answer_candidate)
+        
+
+        # Few-shot プロンプトを使って最終回答を統合
         few_shot_prompt = construct_few_shot_prompt(question)
         final_llm = ChatOpenAI(model=model)
         final_prompt = [
@@ -207,8 +214,8 @@ def rag_implementation(question: str) -> str:
             )),
             HumanMessage(content=(
                 f"質問: {question}\n\n"
-                "以下はBM25によって選ばれた文書から生成された回答候補です。\n"
-                f"回答候補:\n{answer_candidate}\n\n"
+                "以下は各チャンクサイズで生成された回答候補です。\n"
+                f"回答候補:\n{answer_candidates}\n\n"
                 "これらを踏まえて、最も適切な回答を簡潔に記述してください。\n"
                 "Let's think step by step."
             )),
