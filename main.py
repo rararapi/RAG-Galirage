@@ -215,7 +215,7 @@ def rag_implementation(question: str) -> str:
             )),
             HumanMessage(content=(
                 f"質問: {question}\n\n"
-                "以下は各チャンクサイズで生成された回答候補です。\n"
+                "以下は製薬企業のドキュメントから抽出された回答候補です。\n"
                 f"回答候補:\n{answer_candidates}\n\n"
                 "これらを踏まえて、最も適切な回答を簡潔に記述してください。\n"
                 "Let's think step by step."
