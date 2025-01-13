@@ -163,9 +163,9 @@ def rag_implementation(question: str) -> str:
 
         # 2. 複数のチャンクサイズでドキュメントを分割
         chunk_configs = [
-            {"chunk_size": 500, "chunk_overlap": 100},
-            {"chunk_size": 1000, "chunk_overlap": 200},
-            {"chunk_size": 1500, "chunk_overlap": 500},
+            {"chunk_size": 500, "chunk_overlap": 200},
+            {"chunk_size": 800, "chunk_overlap": 400},
+            {"chunk_size": 1100, "chunk_overlap": 600},
         ]
 
         answer_candidates = []
