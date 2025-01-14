@@ -201,7 +201,6 @@ def rag_implementation(question: str) -> str:
             # 各チャンクサイズに基づく回答を取得
             answer_candidate = qa_chain.run(question)
             answer_candidates.append(answer_candidate)
-            print(f"Answer candidate for chunk size {config['chunk_size']}: {answer_candidate}")
 
         # answer_candidatesを統合して回答を生成
         evaluation_prompt = [
@@ -218,7 +217,6 @@ def rag_implementation(question: str) -> str:
 
         evaluator_llm = ChatOpenAI(model=model)
         best_answer = evaluator_llm.invoke(evaluation_prompt).content
-        print(f"Best answer: {best_answer}")
         
         # Few-shot プロンプトを使って最終回答を統合
         few_shot_prompt = construct_few_shot_prompt(question)
@@ -245,7 +243,6 @@ def rag_implementation(question: str) -> str:
         return final_answer
 
     except Exception as e:
-        print(f"Error: {e}")
         return "資料から回答することができませんでした。"
 
 
