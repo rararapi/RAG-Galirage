@@ -36,114 +36,6 @@ pdf_file_urls = [
 # この関数を編集して、あなたの RAG パイプラインを実装してください。
 # !!! 注意 !!!: デバッグ過程は標準出力に出力しないでください。
 # ==============================================================================
-
-def load_pdf_with_pymupdf(url):
-    """URLからPDFをダウンロードしてテキストを抽出"""
-    response = urllib.request.urlopen(url)
-    pdf_data = response.read()
-    pdf_document = fitz.open(stream=pdf_data, filetype="pdf")
-    texts = []
-    for page in pdf_document:
-        texts.append(page.get_text())
-    pdf_document.close()
-    return "\n".join(texts)
-
-def download_and_load_pdfs(urls):
-    """URLからPDFをダウンロードし、pymupdfでテキストを抽出"""
-    documents = []
-    for url in urls:
-        try:
-            # PDFテキストを抽出
-            text_content = load_pdf_with_pymupdf(url)
-            cleaned_text = normalize_text(text_content)
-
-            documents.append({"page_content": cleaned_text, "metadata": {"source": url}})
-        except Exception as e:
-            pass
-    return documents
-
-def normalize_text(s):
-    s = re.sub(r'\s+', ' ', s)  # 連続する空白を1つに
-    s = s.replace("..", ".").replace(". .", ".")
-    s = s.strip()
-    return s
-
-def split_documents(documents, chunk_size=800, chunk_overlap=400):
-    """長いテキストを分割する。空のドキュメントをスキップ"""
-    text_splitter = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    split_docs = []
-    for doc in documents:
-        if doc["page_content"].strip():  # 空でない場合のみ処理
-            # CharacterTextSplitter は docstrings を返すが、ここでは文字列だけで運用
-            chunks = text_splitter.split_text(doc["page_content"])
-            for chunk in chunks:
-                if chunk.strip():
-                    # chunk を "page_content" に格納する形で取り扱う
-                    split_docs.append({
-                        "page_content": chunk,
-                        "metadata": doc["metadata"]
-                    })
-    return split_docs
-
-def filter_documents_by_bm25(question, docs, top_k=50):
-    """
-    質問に対してBM25でスコアリングし、上位 top_k 件の文書だけを返す
-    docs: [{"page_content": str, "metadata": dict}, ...]
-    """
-    # BM25は「トークン化された単語リスト」でスコアリングするため、簡易的にsplit
-    corpus = [d["page_content"] for d in docs]
-    tokenized_corpus = [c.split() for c in corpus]
-
-    bm25 = BM25Okapi(tokenized_corpus)
-    tokenized_query = question.split()
-    scores = bm25.get_scores(tokenized_query)
-
-    # スコアの高い順にソートして上位 top_k を抽出
-    scored_docs = sorted(
-        zip(docs, scores),
-        key=lambda x: x[1],
-        reverse=True
-    )[:top_k]
-
-    filtered_docs = [x[0] for x in scored_docs]
-    return filtered_docs
-
-def construct_few_shot_prompt(question):
-    """
-    Few-shotプロンプトを構築する関数
-    """
-    few_shot_examples = [
-        {
-            "question": "存在意義（パーパス）は、なんですか？",
-            "answer": "世界の人々に商品やサービスを通じて「健康」をお届けすることによって、当社を取り巻くすべての人や社会を「Well-being」へと導き、明日の世界を元気にすることです。",
-        },
-        {
-            "question": "事務連絡者の電話番号は？",
-            "answer": "（06）6758-1235です。",
-        },
-        {
-            "question": "Vロートプレミアムは、第何類の医薬品ですか？",
-            "answer": "第2類医薬品です。",
-        },
-        {
-            "question": "肌ラボ 極潤ヒアルロン液の詰め替え用には、何mLが入っていますか？",
-            "answer": "170mLが入っています。",
-        },
-        {
-            "question": "LN211E8は、どのようなhiPSCの分化において、どのように作用しますか？",
-            "answer": "Wnt 活性化を通じて神経堤細胞への分化を促進します。",
-        },
-    ]
-
-    # Few-shotプロンプトを構築
-    prompt = "以下は質問と回答の例です。\n\n"
-    for example in few_shot_examples:
-        prompt += f"質問: {example['question']}\n{example['answer']}\n\n"
-
-    # 最後にユーザーの質問を追加
-    prompt += f"質問: {question}\n"
-    return prompt
-
 def rag_implementation(question: str) -> str:
     """
     複数のチャンクサイズでRAGパイプラインを実行し、回答を統合する関数
@@ -156,6 +48,114 @@ def rag_implementation(question: str) -> str:
     """
     warnings.filterwarnings("ignore", category=DeprecationWarning)
     logging.basicConfig(level=logging.ERROR)
+
+    def load_pdf_with_pymupdf(url):
+        """URLからPDFをダウンロードしてテキストを抽出"""
+        response = urllib.request.urlopen(url)
+        pdf_data = response.read()
+        pdf_document = fitz.open(stream=pdf_data, filetype="pdf")
+        texts = []
+        for page in pdf_document:
+            texts.append(page.get_text())
+        pdf_document.close()
+        return "\n".join(texts)
+
+    def download_and_load_pdfs(urls):
+        """URLからPDFをダウンロードし、pymupdfでテキストを抽出"""
+        documents = []
+        for url in urls:
+            try:
+                # PDFテキストを抽出
+                text_content = load_pdf_with_pymupdf(url)
+                cleaned_text = normalize_text(text_content)
+
+                documents.append({"page_content": cleaned_text, "metadata": {"source": url}})
+            except Exception as e:
+                pass
+        return documents
+
+    def normalize_text(s):
+        s = re.sub(r'\s+', ' ', s)  # 連続する空白を1つに
+        s = s.replace("..", ".").replace(". .", ".")
+        s = s.strip()
+        return s
+
+    def split_documents(documents, chunk_size=800, chunk_overlap=400):
+        """長いテキストを分割する。空のドキュメントをスキップ"""
+        text_splitter = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        split_docs = []
+        for doc in documents:
+            if doc["page_content"].strip():  # 空でない場合のみ処理
+                # CharacterTextSplitter は docstrings を返すが、ここでは文字列だけで運用
+                chunks = text_splitter.split_text(doc["page_content"])
+                for chunk in chunks:
+                    if chunk.strip():
+                        # chunk を "page_content" に格納する形で取り扱う
+                        split_docs.append({
+                            "page_content": chunk,
+                            "metadata": doc["metadata"]
+                        })
+        return split_docs
+
+    def filter_documents_by_bm25(question, docs, top_k=50):
+        """
+        質問に対してBM25でスコアリングし、上位 top_k 件の文書だけを返す
+        docs: [{"page_content": str, "metadata": dict}, ...]
+        """
+        # BM25は「トークン化された単語リスト」でスコアリングするため、簡易的にsplit
+        corpus = [d["page_content"] for d in docs]
+        tokenized_corpus = [c.split() for c in corpus]
+
+        bm25 = BM25Okapi(tokenized_corpus)
+        tokenized_query = question.split()
+        scores = bm25.get_scores(tokenized_query)
+
+        # スコアの高い順にソートして上位 top_k を抽出
+        scored_docs = sorted(
+            zip(docs, scores),
+            key=lambda x: x[1],
+            reverse=True
+        )[:top_k]
+
+        filtered_docs = [x[0] for x in scored_docs]
+        return filtered_docs
+
+    def construct_few_shot_prompt(question):
+        """
+        Few-shotプロンプトを構築する関数
+        """
+        few_shot_examples = [
+            {
+                "question": "存在意義（パーパス）は、なんですか？",
+                "answer": "世界の人々に商品やサービスを通じて「健康」をお届けすることによって、当社を取り巻くすべての人や社会を「Well-being」へと導き、明日の世界を元気にすることです。",
+            },
+            {
+                "question": "事務連絡者の電話番号は？",
+                "answer": "（06）6758-1235です。",
+            },
+            {
+                "question": "Vロートプレミアムは、第何類の医薬品ですか？",
+                "answer": "第2類医薬品です。",
+            },
+            {
+                "question": "肌ラボ 極潤ヒアルロン液の詰め替え用には、何mLが入っていますか？",
+                "answer": "170mLが入っています。",
+            },
+            {
+                "question": "LN211E8は、どのようなhiPSCの分化において、どのように作用しますか？",
+                "answer": "Wnt 活性化を通じて神経堤細胞への分化を促進します。",
+            },
+        ]
+
+        # Few-shotプロンプトを構築
+        prompt = "以下は質問と回答の例です。\n\n"
+        for example in few_shot_examples:
+            prompt += f"質問: {example['question']}\n{example['answer']}\n\n"
+
+        # 最後にユーザーの質問を追加
+        prompt += f"質問: {question}\n"
+        return prompt
+
 
     try:
         # 1. PDFをダウンロードしてまとめてテキスト抽出
