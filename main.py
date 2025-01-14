@@ -165,7 +165,7 @@ def rag_implementation(question: str) -> str:
         chunk_configs = [
             {"chunk_size": 500, "chunk_overlap": 200},
             {"chunk_size": 800, "chunk_overlap": 400},
-            {"chunk_size": 1100, "chunk_overlap": 600},
+            {"chunk_size": 1000, "chunk_overlap": 500},
         ]
 
         answer_candidates = []
@@ -201,8 +201,25 @@ def rag_implementation(question: str) -> str:
             # 各チャンクサイズに基づく回答を取得
             answer_candidate = qa_chain.run(question)
             answer_candidates.append(answer_candidate)
-        
+            print(f"Answer candidate for chunk size {config['chunk_size']}: {answer_candidate}")
 
+        # answer_candidatesを統合して回答を生成
+        evaluation_prompt = [
+            SystemMessage(content=(
+                "以下は複数の回答候補です。質問に対して各回答候補を考慮し、最も適切な回答を生成してください。\n"
+                "次の基準を考慮してください:\n"
+                "1. 回答が質問に具体的かつ直接的に答えているか。\n"
+                "2. 回答の内容が正確で一貫性があるか。\n"
+                "3. 文法や表現が適切で、簡潔かつ明確であるか。\n"
+                "回答候補を総合的に判断して、最も適切な回答を作成してください。"
+            )),
+            HumanMessage(content=f"質問: {question}\n\n回答候補:\n{answer_candidates}\n\nこれらを考慮して、最適な回答を簡潔に記述してください。")
+        ]
+
+        evaluator_llm = ChatOpenAI(model=model)
+        best_answer = evaluator_llm.invoke(evaluation_prompt).content
+        print(f"Best answer: {best_answer}")
+        
         # Few-shot プロンプトを使って最終回答を統合
         few_shot_prompt = construct_few_shot_prompt(question)
         final_llm = ChatOpenAI(model=model)
@@ -217,9 +234,9 @@ def rag_implementation(question: str) -> str:
             )),
             HumanMessage(content=(
                 f"質問: {question}\n\n"
-                "以下は製薬企業のドキュメントから抽出された回答候補です。\n"
-                f"回答候補:\n{answer_candidates}\n\n"
-                "これらを踏まえて、最も適切な回答を簡潔に記述してください。\n"
+                "以下は製薬企業のドキュメントから抽出された最適な回答です:\n"
+                f"回答: {best_answer}\n\n"
+                "これを踏まえて、最も適切な回答を簡潔に記述してください。\n"
                 "Let's think step by step."
             )),
         ]
@@ -228,6 +245,7 @@ def rag_implementation(question: str) -> str:
         return final_answer
 
     except Exception as e:
+        print(f"Error: {e}")
         return "資料から回答することができませんでした。"
 
 
