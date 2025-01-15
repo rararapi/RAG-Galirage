@@ -204,15 +204,24 @@ def rag_implementation(question: str) -> str:
 
         # answer_candidatesを統合して回答を生成
         evaluation_prompt = [
-            SystemMessage(content=(
-                "以下は複数の回答候補です。質問に対して各回答候補を考慮し、最も適切な回答を生成してください。\n"
-                "次の基準を考慮してください:\n"
-                "1. 回答が質問に具体的かつ直接的に答えているか。\n"
-                "2. 回答の内容が正確で一貫性があるか。\n"
-                "3. 文法や表現が適切で、簡潔かつ明確であるか。\n"
-                "回答候補を総合的に判断して、最も適切な回答を作成してください。"
-            )),
-            HumanMessage(content=f"質問: {question}\n\n回答候補:\n{answer_candidates}\n\nこれらを考慮して、最適な回答を簡潔に記述してください。")
+            SystemMessage(
+                content=(
+                    "以下は複数の回答候補です。質問に対して各回答候補を考慮し、最も適切な回答を生成してください。\n"
+                    "次の4つの指標を最大化するように回答を統合してください:\n"
+                    "1. Conciseness（簡潔性）: 不要な情報を省き、簡潔に答えているか\n"
+                    "2. Correctness（正確性）: 情報に誤りがなく、信頼できるか\n"
+                    "3. Helpfulness（有用性）: 質問に的確に答えており、付加的に役立つ情報を提供できるか\n"
+                    "4. Harmfulness（有害性）: 不適切・攻撃的・有害表現が含まれていないか（低いほど望ましい）\n"
+                    "これらを考慮し、最も良好なバランスで回答を作成してください。"
+                )
+            ),
+            HumanMessage(
+                content=(
+                    f"質問: {question}\n\n"
+                    f"回答候補:\n{answer_candidates}\n\n"
+                    "これらを踏まえて、最適な回答を簡潔に記述してください。"
+                )
+            ),
         ]
 
         evaluator_llm = ChatOpenAI(model=model)
@@ -225,16 +234,18 @@ def rag_implementation(question: str) -> str:
             SystemMessage(content=(
                 "あなたは製薬企業のドキュメント（Well-beingレポート、財務諸表、商品紹介資料、研究論文など）"
                 "から情報を取得し、ユーザーの質問に最適な回答を提供するAIアシスタントです。\n\n"
-                "以下は質問とその回答例です。参考にして、与えられた質問に適切な回答を短い一文で答えてください。\n"
-                "また、与えられた情報が不足している場合でも、論理的に考えて最も妥当な回答を推測してください。\n"
-                "さらに、質問に主語が含まれている場合は、回答に主語が不要であることに留意してください。\n\n"
+                "以下の4つの評価指標を満たしつつ、簡潔に回答してください:\n"
+                "1. Conciseness（簡潔性）\n"
+                "2. Correctness（正確性）\n"
+                "3. Helpfulness（有用性）\n"
+                "4. Harmfulness（有害性）\n\n"
                 f"{few_shot_prompt}"
             )),
             HumanMessage(content=(
                 f"質問: {question}\n\n"
                 "以下は製薬企業のドキュメントから抽出された最適な回答です:\n"
                 f"回答: {best_answer}\n\n"
-                "これを踏まえて、最も適切な回答を簡潔に記述してください。\n"
+                "この回答をベースに、上記指標を考慮して最終回答を簡潔に記述してください。\n"
                 "Let's think step by step."
             )),
         ]
@@ -243,6 +254,7 @@ def rag_implementation(question: str) -> str:
         return final_answer
 
     except Exception as e:
+        print(f"Error: {e}")
         return "資料から回答することができませんでした。"
 
 
