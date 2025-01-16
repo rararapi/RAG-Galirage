@@ -165,7 +165,7 @@ def rag_implementation(question: str) -> str:
         chunk_configs = [
             {"chunk_size": 500, "chunk_overlap": 200},
             {"chunk_size": 800, "chunk_overlap": 400},
-            {"chunk_size": 1100, "chunk_overlap": 600},
+            {"chunk_size": 1000, "chunk_overlap": 500},
         ]
 
         answer_candidates = []
