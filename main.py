@@ -46,8 +46,26 @@ def rag_implementation(question: str) -> str:
     Returns:
         answer (str): 統合された最終的な回答
     """
+    
     warnings.filterwarnings("ignore", category=DeprecationWarning)
     logging.basicConfig(level=logging.ERROR)
+
+    def rewrite_question_with_llm(original_question: str) -> str:
+        """質問を言語モデルを使って書き換え、RAGが実行しやすくする。"""
+        try:
+            language_model = ChatOpenAI(model=model)
+            prompt_text = (
+                "Your task is to rewrite the following question for optimal use in a retrieval-augmented generation (RAG) system. \n"
+                "The rewritten question must retain the original meaning and nuances without altering the intent. \n"
+                "Add clarifying or supplementary terms only if they improve the RAG system's ability to retrieve relevant information. \n"
+                "Keep the query concise and focused. Avoid introducing any unnecessary or unrelated details.\n\n"
+                f"Original Question: {original_question}\n\n"
+                "Rewritten Question:"
+            )
+            modified_question = language_model.invoke([HumanMessage(content=prompt_text)]).content.strip()
+            return modified_question
+        except Exception as error:
+            return original_question  # 書き換えに失敗した場合は元の質問を返す
 
     def load_pdf_with_pymupdf(url):
         """URLからPDFをダウンロードしてテキストを抽出"""
@@ -158,6 +176,9 @@ def rag_implementation(question: str) -> str:
 
 
     try:
+        rewritten_question = rewrite_question_with_llm(question)
+        print(rewritten_question)
+
         # 1. PDFをダウンロードしてまとめてテキスト抽出
         documents = download_and_load_pdfs(pdf_file_urls)
 
@@ -175,7 +196,7 @@ def rag_implementation(question: str) -> str:
             split_docs = split_documents(documents, chunk_size=config["chunk_size"], chunk_overlap=config["chunk_overlap"])
             
             # 質問との関連度が高いチャンクを抽出
-            filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=3)
+            filtered_docs = filter_documents_by_bm25(rewritten_question, split_docs, top_k=3)
 
             # ベクトルストアを作成
             embeddings = OpenAIEmbeddings()
@@ -199,12 +220,12 @@ def rag_implementation(question: str) -> str:
             )
 
             # 各チャンクサイズに基づく回答を取得
-            answer_candidate = qa_chain.run(question)
+            answer_candidate = qa_chain.run(rewritten_question)
             answer_candidates.append(answer_candidate)
         
 
         # Few-shot プロンプトを使って最終回答を統合
-        few_shot_prompt = construct_few_shot_prompt(question)
+        few_shot_prompt = construct_few_shot_prompt(rewritten_question)
         final_llm = ChatOpenAI(model=model)
         final_prompt = [
             SystemMessage(content=(
@@ -217,7 +238,7 @@ def rag_implementation(question: str) -> str:
                 f"{few_shot_prompt}"
             )),
             HumanMessage(content=(
-                f"質問: {question}\n\n"
+                f"質問: {rewritten_question}\n\n"
                 "以下は製薬企業のドキュメントから抽出された回答候補です。\n"
                 f"回答候補:\n{answer_candidates}\n\n"
                 "これらを踏まえて、最も適切な回答を簡潔に記述してください。\n"
