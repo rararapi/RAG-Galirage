@@ -202,14 +202,17 @@ def rag_implementation(question: str) -> str:
             answer_candidate = qa_chain.run(question)
             answer_candidates.append(answer_candidate)
         
-
         # Few-shot プロンプトを使って最終回答を統合
         few_shot_prompt = construct_few_shot_prompt(question)
         final_llm = ChatOpenAI(model=model)
+        
+        # 回答候補をAIが読みやすい形式に整形
+        formatted_candidates = "\n".join([f"候補 {i+1}: {candidate}" for i, candidate in enumerate(answer_candidates)])
+        
         final_prompt = [
             SystemMessage(content=(
                 "以下は質問とその回答例です。参考にして、与えられた質問に適切な回答を短い一文で答えてください。\n"
-                "与えられた情報が不足している場合でも、背景情報を補足し、最も妥当な回答を推測してください。\n"
+                "与えられた情報が不足している場合、最も妥当な回答をしてください。\n"
                 "以下のステップを参考に回答を作成してください：\n"
                 "1. 質問の主旨を正確に理解する。\n"
                 "2. 回答候補を比較し、最も関連性の高いものを選択する。\n"
@@ -219,7 +222,7 @@ def rag_implementation(question: str) -> str:
             HumanMessage(content=(
                 f"質問: {question}\n\n"
                 "以下は製薬企業のドキュメントから抽出された回答候補です。\n"
-                f"回答候補:\n{answer_candidates}\n\n"
+                f"回答候補:\n{formatted_candidates}\n\n"
                 "これらを踏まえて、最も適切な回答を簡潔に記述してください。\n"
                 "Let's think step by step."
             )),
