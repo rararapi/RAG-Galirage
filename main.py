@@ -145,6 +145,46 @@ def rag_implementation(question: str) -> str:
                 "question": "LN211E8は、どのようなhiPSCの分化において、どのように作用しますか？",
                 "answer": "Wnt 活性化を通じて神経堤細胞への分化を促進します。",
             },
+            {
+                "question": "Vロートプレミアムは、どんな特徴がある目薬ですか？",
+                "answer": "国内最多12有効成分を配合し、高分子コンドロイチンなどで多角的に疲れ目にアプローチします。"
+            },
+            {
+                "question": "Vロートプレミアムは、1回に何滴使用すればよいですか？",
+                "answer": "1回1～2滴を、1日5～6回点眼してください。"
+            },
+            {
+                "question": "Vロートプレミアムは、コンタクトレンズを装着したままでも使えますか？",
+                "answer": "ソフトコンタクトレンズを装着したままの使用は避けてください。"
+            },
+            {
+                "question": "フリーアングルノズル®とは何ですか？",
+                "answer": "どの角度からでも点眼しやすい構造のノズルです。"
+            },
+            {
+                "question": "Vロートプレミアムにコンドロイチン硫酸エステルナトリウムは、何%配合されていますか？",
+                "answer": "0.25%配合されています。"
+            },
+            {
+                "question": "Vロートプレミアムは、保管する際に注意することはありますか？",
+                "answer": "直射日光を避け、密栓して涼しい場所に保管し、小児の手の届かない場所に置いてください。"
+            },
+            {
+                "question": "エクシブ Wディープ10クリームの使用方法を教えてください。",
+                "answer": "1日1回、適量を患部に塗布してください。"
+            },
+            {
+                "question": "エクシブ Wディープ10クリームはどのような症状に効きますか？",
+                "answer": "水虫、いんきんたむし、ぜにたむしに効果があります。"
+            },
+            {
+                "question": "エクシブ Wディープ10クリームにはどのくらい尿素が配合されていますか？",
+                "answer": "尿素10%が配合されています。"
+            },
+            {
+                "question": "エクシブ Wディープ10クリームの内容量と価格を教えてください。",
+                "answer": "35g入りで、希望小売価格は2,200円（税込）です。"
+            }
         ]
 
         # Few-shotプロンプトを構築
@@ -163,9 +203,8 @@ def rag_implementation(question: str) -> str:
 
         # 2. 複数のチャンクサイズでドキュメントを分割
         chunk_configs = [
-            {"chunk_size": 500, "chunk_overlap": 200},
-            {"chunk_size": 800, "chunk_overlap": 400},
-            {"chunk_size": 1000, "chunk_overlap": 500},
+            # {"chunk_size": 500, "chunk_overlap": 200},
+            {"chunk_size": 800, "chunk_overlap": 400}
         ]
 
         answer_candidates = []
@@ -177,6 +216,24 @@ def rag_implementation(question: str) -> str:
             # 質問との関連度が高いチャンクを抽出
             filtered_docs = filter_documents_by_bm25(question, split_docs, top_k=3)
 
+            # questionと上位のfiltered_docs全文をLLMに投げて回答を得る
+            for doc in filtered_docs:
+                full_text = "\n".join([doc["page_content"]])
+                full_prompt = (
+                    "与えられた質問に適切な回答を答えてください。\n"
+                    "与えられた情報が不足している場合、最も妥当な回答をしてください。\n"
+                    "以下のステップを参考に回答を作成してください：\n"
+                    "1. 質問の主旨を正確に理解する。\n"
+                    "2. 正確な回答のみを記述する。\n"
+                    "参考情報: \n"
+                    f"{full_text}\n\n"
+                    f"質問: {question}\n\n"
+                    "Let's think step by step.\n\n"
+                )
+                full_llm = ChatOpenAI(model=model)
+                answer_candidate = full_llm.invoke([HumanMessage(content=full_prompt)]).content
+                answer_candidates.append(answer_candidate)
+                
             # ベクトルストアを作成
             embeddings = OpenAIEmbeddings()
             vector_store_dir = f"DB_store_{config['chunk_size']}"
@@ -208,7 +265,6 @@ def rag_implementation(question: str) -> str:
         
         # 回答候補をAIが読みやすい形式に整形
         formatted_candidates = "\n".join([f"候補 {i+1}: {candidate}" for i, candidate in enumerate(answer_candidates)])
-        
         final_prompt = [
             SystemMessage(content=(
                 "以下は質問とその回答例です。参考にして、与えられた質問に適切な回答を短い一文で答えてください。\n"
